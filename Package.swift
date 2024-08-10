@@ -14,9 +14,8 @@ let package = Package(
         .library(name: "FeatherSpecVapor", targets: ["FeatherSpecVapor"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/vapor/vapor", from: "4.87.0"),
-        .package(url: "https://github.com/feather-framework/feather-spec", .upToNextMinor(from: "0.3.0")),
-        
+        .package(url: "https://github.com/vapor/vapor", from: "4.102.1"),
+        .package(url: "https://github.com/feather-framework/feather-spec", .upToNextMinor(from: "0.4.0")),
     ],
     targets: [
         .target(name: "FeatherSpecVapor", dependencies: [

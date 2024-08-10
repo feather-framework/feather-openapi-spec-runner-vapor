@@ -1,94 +1,112 @@
-//
-//  FeatherSpecVaporTests.swift
-//  FeatherSpecVapor
-//
-//  Created by Tibor Bödecs on 23/11/2023.
-//
-
-import Foundation
 import XCTest
 import OpenAPIRuntime
-import HTTPTypes
 import FeatherSpec
-import FeatherSpecVapor
 import Vapor
-
-enum SomeError: Error {
-    case foo
-}
-
-struct Todo: Codable {
-    let title: String
-}
-
-extension Todo: Content {}
+import FeatherSpecVapor
 
 final class FeatherSpecVaporTests: XCTestCase {
 
-    func other() async throws {
-        throw SomeError.foo
-    }
+    let todo = Todo(title: "task01")
+    let body = Todo(title: "task01").httpBody
 
-    func testVapor() async throws {
-        let app = Application(.testing)
-        defer { app.shutdown() }
-
+    func todosApp() async throws -> Application {
+        let app = try await Application.make(.testing)
         app.routes.post("todos") { req async throws -> Todo in
             try req.content.decode(Todo.self)
         }
-        let runner = VaporExpectationRequestRunner(app: app)
-        try await test(using: runner)
+        return app
     }
 
-    func test(using runner: SpecRunner) async throws {
-        let encoder = JSONEncoder()
-        var buffer = ByteBuffer()
-        try encoder.encode(Todo(title: "task01"), into: &buffer)
-        let body = HTTPBody(.init(buffer: buffer))
+    func testMutatingfuncSpec() async throws {
+        let app = try await todosApp()
+        let runner = VaporSpecRunner(app: app)
 
-        try await SpecBuilder {
+        var spec = Spec()
+        spec.setMethod(.post)
+        spec.setPath("todos")
+        spec.setBody(todo.httpBody)
+        spec.setHeader(.contentType, "application/json")
+        spec.addExpectation(.ok)
+        spec.addExpectation { response, body in
+            let todo = try await body.decode(Todo.self, with: response)
+            XCTAssertEqual(todo.title, self.todo.title)
+        }
+
+        try await runner.run(spec)
+        try await app.asyncShutdown()
+    }
+
+    func testBuilderFuncSpec() async throws {
+        let app = try await todosApp()
+        let runner = VaporSpecRunner(app: app)
+
+        let spec = Spec()
+            .post("todos")
+            .header(.contentType, "application/json")
+            .body(body)
+            .expect(.ok)
+            .expect { response, body in
+                let todo = try await body.decode(Todo.self, with: response)
+                XCTAssertEqual(todo.title, "task01")
+            }
+
+        try await runner.run(spec)
+        try await app.asyncShutdown()
+    }
+
+    func testDslSpec() async throws {
+        let app = try await todosApp()
+        let runner = VaporSpecRunner(app: app)
+
+        let spec = SpecBuilder {
             Method(.post)
             Path("todos")
             Header(.contentType, "application/json")
             Body(body)
             Expect(.ok)
             Expect { response, body in
-                var buffer = ByteBuffer()
-                switch body.length {
-                case .known(let value):
-                    try await body.collect(upTo: Int(value), into: &buffer)
-                case .unknown:
-                    for try await chunk in body {
-                        buffer.writeBytes(chunk)
-                    }
-                }
-                let decoder = JSONDecoder()
-                let todo = try decoder.decode(Todo.self, from: buffer)
+                let todo = try await body.decode(Todo.self, with: response)
                 XCTAssertEqual(todo.title, "task01")
             }
         }
-        .build(using: runner)
-        .test()
+        .build()
 
-        var spec = Spec(runner: runner)
-        spec.setMethod(.post)
-        spec.setPath("todos")
-        spec.setBody(body)
-        spec.setHeader(.contentType, "application/json")
-        spec.addExpectation(.ok)
-        spec.addExpectation { response, body in
-            /// same as above...
+        try await runner.run(spec)
+        try await app.asyncShutdown()
+    }
+
+    func testNoPath() async throws {
+        let app = try await Application.make(.testing)
+        let runner = VaporSpecRunner(app: app)
+
+        try await runner.run {
+            Method(.get)
         }
-        try await spec.test()
+        try await app.asyncShutdown()
+    }
 
-        try await Spec(runner: runner)
-            .post("todos")
-            .header(.contentType, "application/json")
-            .body(body)
-            .expect(.ok)
-            .expect { response, body in
-                // some expectation...
+    func testUnkownLength() async throws {
+        let app = try await todosApp()
+        let runner = VaporSpecRunner(app: app)
+
+        let sequence = AnySequence(#"{"title":"task01"}"#.utf8)
+        let body = HTTPBody(
+            sequence,
+            length: .unknown,
+            iterationBehavior: .single
+        )
+
+        try await runner.run {
+            Method(.post)
+            Path("todos")
+            Header(.contentType, "application/json")
+            Body(body)
+            Expect(.ok)
+            Expect { response, body in
+                let todo = try await body.decode(Todo.self, with: response)
+                XCTAssertEqual(todo.title, "task01")
             }
-            .test()
+        }
+        try await app.asyncShutdown()
     }
 }
